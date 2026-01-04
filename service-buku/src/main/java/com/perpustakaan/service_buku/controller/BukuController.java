@@ -1,0 +1,50 @@
+package com.perpustakaan.service_buku.controller;
+
+import com.perpustakaan.service_buku.dto.BukuRequest;
+import com.perpustakaan.service_buku.entity.Buku;
+import com.perpustakaan.service_buku.service.BukuService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/buku")
+public class BukuController {
+
+    @Autowired
+    private BukuService bukuService;
+
+    @PostMapping
+    public ResponseEntity<Buku> saveBuku(@RequestBody BukuRequest request) {
+        Buku saved = bukuService.saveBuku(request);
+        return new ResponseEntity<>(saved, HttpStatus.CREATED);
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<Buku> getBukuById(@PathVariable("id") Long id) {
+        Buku buku = bukuService.getBukuById(id);
+        if (buku != null) {
+            return ResponseEntity.ok(buku);
+        }
+        return ResponseEntity.notFound().build();
+    }
+
+    @GetMapping
+    public ResponseEntity<List<Buku>> getAllBuku() {
+        return ResponseEntity.ok(bukuService.getAllBuku());
+    }
+
+    @PutMapping("/{id}")
+    public ResponseEntity<Buku> updateBuku(@PathVariable("id") Long id, @RequestBody BukuRequest request) {
+        Buku updated = bukuService.updateBuku(id, request);
+        return ResponseEntity.ok(updated);
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteBuku(@PathVariable("id") Long id) {
+        bukuService.deleteBuku(id);
+        return ResponseEntity.noContent().build();
+    }
+}
