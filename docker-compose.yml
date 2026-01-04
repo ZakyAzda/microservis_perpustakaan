@@ -2,57 +2,10 @@ version: '3.8'
 
 services:
   # ==========================================
-  # 1. INFRASTRUCTURE (Monitoring & Logging)
+  # 1. INFRASTRUCTURE (Logging & Messaging)
   # ==========================================
-  
-  # --- Distributed Tracing ---
-  zipkin:
-    image: openzipkin/zipkin
-    container_name: zipkin
-    ports:
-      - "9411:9411"
-    networks:
-      - perpustakaan-network
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:9411/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
-  # --- Metrics Collection ---
-  prometheus:
-    image: prom/prometheus
-    container_name: prometheus
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
-    networks:
-      - perpustakaan-network
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:9090/-/healthy"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  # --- Visualization Dashboard ---
-  grafana:
-    image: grafana/grafana
-    container_name: grafana
-    ports:
-      - "3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_SECURITY_ADMIN_USER=admin
-    volumes:
-      - ./grafana/provisioning:/etc/grafana/provisioning
-    depends_on:
-      prometheus:
-        condition: service_healthy
-    networks:
-      - perpustakaan-network
-
-  # --- Centralized Logging (ELK Stack) ---
+  # --- ELK Stack (Logstash, Elasticsearch, Kibana) ---
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
     container_name: elasticsearch
@@ -106,6 +59,21 @@ services:
     networks:
       - perpustakaan-network
 
+  # --- Message Broker (RabbitMQ) ---
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"   # Port komunikasi antar service
+      - "15672:15672" # Dashboard RabbitMQ
+    networks:
+      - perpustakaan-network
+    healthcheck:
+        test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+        interval: 30s
+        timeout: 10s
+        retries: 5
+
   # ==========================================
   # 2. SERVICE DISCOVERY
   # ==========================================
@@ -122,12 +90,6 @@ services:
       - EUREKA_CLIENT_FETCH_REGISTRY=false
     networks:
       - perpustakaan-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8761/actuator/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
 
   # ==========================================
   # 3. API GATEWAY
@@ -142,21 +104,11 @@ services:
     environment:
       - SPRING_PROFILES_ACTIVE=docker
       - EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE=http://eureka-server:8761/eureka/
-      - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
     depends_on:
       eureka-server:
-        condition: service_healthy
-      zipkin:
-        condition: service_healthy
+        condition: service_started
     networks:
       - perpustakaan-network
-    restart: on-failure
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
 
   # ==========================================
   # 4. MICROSERVICES
@@ -171,21 +123,14 @@ services:
     environment:
       - SPRING_PROFILES_ACTIVE=docker
       - EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE=http://eureka-server:8761/eureka/
-      - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
+      - SPRING_RABBITMQ_HOST=rabbitmq
     depends_on:
       eureka-server:
-        condition: service_healthy
-      zipkin:
+        condition: service_started
+      rabbitmq:
         condition: service_healthy
     networks:
       - perpustakaan-network
-    restart: on-failure
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/actuator/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
 
   service-buku:
     build: 
@@ -197,21 +142,14 @@ services:
     environment:
       - SPRING_PROFILES_ACTIVE=docker
       - EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE=http://eureka-server:8761/eureka/
-      - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
+      - SPRING_RABBITMQ_HOST=rabbitmq
     depends_on:
       eureka-server:
-        condition: service_healthy
-      zipkin:
+        condition: service_started
+      rabbitmq:
         condition: service_healthy
     networks:
       - perpustakaan-network
-    restart: on-failure
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8082/actuator/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
 
   service-peminjaman:
     build: 
@@ -223,21 +161,14 @@ services:
     environment:
       - SPRING_PROFILES_ACTIVE=docker
       - EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE=http://eureka-server:8761/eureka/
-      - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
+      - SPRING_RABBITMQ_HOST=rabbitmq
     depends_on:
       eureka-server:
-        condition: service_healthy
-      zipkin:
+        condition: service_started
+      rabbitmq:
         condition: service_healthy
     networks:
       - perpustakaan-network
-    restart: on-failure
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8083/actuator/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
 
   service-pengembalian:
     build: 
@@ -249,25 +180,15 @@ services:
     environment:
       - SPRING_PROFILES_ACTIVE=docker
       - EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE=http://eureka-server:8761/eureka/
-      - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
+      - SPRING_RABBITMQ_HOST=rabbitmq
     depends_on:
       eureka-server:
-        condition: service_healthy
-      zipkin:
+        condition: service_started
+      rabbitmq:
         condition: service_healthy
     networks:
       - perpustakaan-network
-    restart: on-failure
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8084/actuator/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
 
-# ==========================================
-# NETWORKS & VOLUMES
-# ==========================================
 networks:
   perpustakaan-network:
     driver: bridge
