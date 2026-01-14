@@ -1,5 +1,6 @@
 package com.perpustakaan.service_peminjaman.service;
 
+import com.perpustakaan.service_peminjaman.config.RabbitMQConfig;
 import com.perpustakaan.service_peminjaman.dto.PeminjamanRequest;
 import com.perpustakaan.service_peminjaman.entity.Peminjaman;
 import com.perpustakaan.service_peminjaman.exception.ResourceNotFoundException;
@@ -12,6 +13,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import java.util.Map;
+import java.util.HashMap;
 
 @Service
 public class PeminjamanService {
@@ -25,6 +29,9 @@ public class PeminjamanService {
     @Autowired
     private DiscoveryClient discoveryClient;
 
+    @Autowired
+    private RabbitTemplate rabbitTemplate;
+
     public Peminjaman savePeminjaman(PeminjamanRequest request) {
         Peminjaman peminjaman = new Peminjaman();
         peminjaman.setAnggotaId(request.getAnggotaId());
@@ -32,7 +39,27 @@ public class PeminjamanService {
         peminjaman.setTanggalPinjam(request.getTanggalPinjam());
         peminjaman.setTanggalKembali(request.getTanggalKembali());
         peminjaman.setStatus(request.getStatus());
-        return peminjamanRepository.save(peminjaman);
+        
+        Peminjaman savedPeminjaman = peminjamanRepository.save(peminjaman);
+
+        // 2. LOGIKA CQRS: Kirim Event ke RabbitMQ
+        try {
+            Map<String, Object> event = new HashMap<>();
+            event.put("bukuId", request.getBukuId());
+            event.put("action", "PINJAM");
+            
+            System.out.println("Mengirim event ke RabbitMQ: " + event);
+            
+            rabbitTemplate.convertAndSend(
+                RabbitMQConfig.EXCHANGE, 
+                RabbitMQConfig.ROUTING_KEY, 
+                event
+            );
+        } catch (Exception e) {
+            System.err.println("Gagal mengirim event RabbitMQ: " + e.getMessage());
+        }
+
+        return savedPeminjaman;
     }
 
     public ResponseTemplateVO getPeminjamanWithDetails(Long peminjamanId) {

@@ -1,0 +1,37 @@
+# ===================
+# SERVER SETTINGS
+# ===================
+server.name: kibana
+server.host: "0.0.0.0"
+server.port: 5601
+
+# ===================
+# ELASTICSEARCH CONNECTION
+# ===================
+elasticsearch.hosts: ["http://elasticsearch:9200"]
+elasticsearch.requestTimeout: 30000
+elasticsearch.pingTimeout: 30000
+
+# ===================
+# SECURITY (DEV MODE)
+# ===================
+xpack.security.enabled: false
+
+# Encryption Key (WAJIB ADA untuk Saved Objects)
+xpack.encryptedSavedObjects.encryptionKey: "min-32-byte-long-strong-encryption-key-12345"
+
+# ===================
+# TELEMETRY
+# ===================
+telemetry.enabled: false
+telemetry.optIn: false
+
+# ===================
+# MONITORING
+# ===================
+# Monitoring cluster sendiri via UI
+xpack.monitoring.ui.enabled: true
+
+# CATATAN:
+# Baris xpack.ml.enabled, apm, fleet, dll SUDAH DIHAPUS
+# karena menyebabkan error startup di Kibana 8.x.

@@ -1,69 +1,256 @@
+# ==============================================================
+# API GATEWAY CONFIGURATION (FINAL FIX)
+# Stack: Spring Cloud Gateway, Eureka, Resilience4J, Swagger UI
+# ==============================================================
+
 spring:
   application:
     name: api-gateway
+  
   cloud:
     gateway:
-      mvc:
-        routes:
-          # Route untuk Service Anggota
-          - id: service-anggota
-            uri: lb://service-anggota
-            predicates:
-              - Path=/api/anggota/**
-          
-          # Route untuk Service Buku
-          - id: service-buku
-            uri: lb://service-buku
-            predicates:
-              - Path=/api/buku/**
-          
-          # Route untuk Service Peminjaman
-          - id: service-peminjaman
-            uri: lb://service-peminjaman
-            predicates:
-              - Path=/api/peminjaman/**
-          
-          # Route untuk Service Pengembalian
-          - id: service-pengembalian
-            uri: lb://service-pengembalian
-            predicates:
-              - Path=/api/pengembalian/**
-          
-          # Route untuk Eureka Dashboard
-          - id: eureka-server
-            uri: http://eureka-server:8761
-            predicates:
-              - Path=/eureka/**
+      # Konfigurasi Timeout HTTP Client
+      httpclient:
+        connect-timeout: 5000
+        response-timeout: 30s
+      
+      # Konfigurasi Global CORS (Pastikan Java Bean CORS dimatikan)
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOrigins: "*"
+            allowedMethods: "*"
+            allowedHeaders: "*"
 
+      # ==========================================
+      # DAFTAR ROUTES
+      # ==========================================
+      routes:
+        # ------------------------------------------
+        # 1. SWAGGER AGGREGATION ROUTES (FIXED REGEX)
+        # ------------------------------------------
+        # Regex ini menangkap URL baik dengan atau tanpa '/' di belakang
+        
+        - id: openapi-anggota
+          uri: lb://service-anggota
+          predicates:
+            - Path=/v3/api-docs/service-anggota/**
+          filters:
+            - RewritePath=/v3/api-docs/service-anggota(?<segment>.*), /v3/api-docs${segment}
+
+        - id: openapi-buku
+          uri: lb://service-buku
+          predicates:
+            - Path=/v3/api-docs/service-buku/**
+          filters:
+            - RewritePath=/v3/api-docs/service-buku(?<segment>.*), /v3/api-docs${segment}
+
+        - id: openapi-peminjaman
+          uri: lb://service-peminjaman
+          predicates:
+            - Path=/v3/api-docs/service-peminjaman/**
+          filters:
+            - RewritePath=/v3/api-docs/service-peminjaman(?<segment>.*), /v3/api-docs${segment}
+
+        - id: openapi-pengembalian
+          uri: lb://service-pengembalian
+          predicates:
+            - Path=/v3/api-docs/service-pengembalian/**
+          filters:
+            - RewritePath=/v3/api-docs/service-pengembalian(?<segment>.*), /v3/api-docs${segment}
+
+        # ------------------------------------------
+        # 2. MAIN API ROUTES (SERVICE LOGIC)
+        # ------------------------------------------
+        
+        # Service Anggota
+        - id: service-anggota
+          uri: lb://service-anggota
+          predicates:
+            - Path=/api/anggota/**
+          filters:
+            - name: Retry
+              args:
+                retries: 3
+                statuses: BAD_GATEWAY,SERVICE_UNAVAILABLE
+                methods: GET,POST,PUT,DELETE
+      
+        # Service Buku
+        - id: service-buku
+          uri: lb://service-buku
+          predicates:
+            - Path=/api/buku/**
+          filters:
+            - name: Retry
+              args:
+                retries: 3
+                statuses: BAD_GATEWAY,SERVICE_UNAVAILABLE
+                methods: GET,POST,PUT,DELETE
+      
+        # Service Peminjaman
+        - id: service-peminjaman
+          uri: lb://service-peminjaman
+          predicates:
+            - Path=/api/peminjaman/**
+          filters:
+            - name: Retry
+              args:
+                retries: 3
+                statuses: BAD_GATEWAY,SERVICE_UNAVAILABLE
+                methods: GET,POST,PUT,DELETE
+      
+        # Service Pengembalian
+        - id: service-pengembalian
+          uri: lb://service-pengembalian
+          predicates:
+            - Path=/api/pengembalian/**
+          filters:
+            - name: Retry
+              args:
+                retries: 3
+                statuses: BAD_GATEWAY,SERVICE_UNAVAILABLE
+                methods: GET,POST,PUT,DELETE
+    
+      # Discovery Locator (Opsional, untuk auto-route)
+      discovery:
+        locator:
+          enabled: true
+          lower-case-service-id: true
+
+# ==========================================
+# SERVER CONFIGURATION
+# ==========================================
 server:
   port: 8080
+  compression:
+    enabled: true
+    mime-types: application/json,application/xml,text/html,text/xml,text/plain
+  http2:
+    enabled: true
+  shutdown: graceful
 
-# Eureka Client Configuration
+# Graceful Shutdown Settings
+spring.lifecycle.timeout-per-shutdown-phase: 30s
+
+# ==========================================
+# EUREKA CLIENT CONFIGURATION
+# ==========================================
 eureka:
   client:
     service-url:
-      defaultZone: ${EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE:http://localhost:8761/eureka/}
+      defaultZone: ${EUREKA_SERVER_URL:http://localhost:8761/eureka/}
     register-with-eureka: true
     fetch-registry: true
+    registry-fetch-interval-seconds: 10
+  instance:
+    prefer-ip-address: true
+    hostname: api-gateway
+    instance-id: ${spring.application.name}:${random.value}
+    metadata-map:
+      management.port: ${server.port}
+      management.context-path: /actuator
 
-# Monitoring & Management
+# ==========================================
+# ACTUATOR & MONITORING
+# ==========================================
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus,metrics,gateway
+        include: health,info,gateway,env,loggers
+      base-path: /actuator
   endpoint:
     health:
       show-details: always
-  tracing:
-    sampling:
-      probability: 1.0
-  zipkin:
-    tracing:
-      endpoint: ${MANAGEMENT_ZIPKIN_TRACING_ENDPOINT:http://localhost:9411/api/v2/spans}
+    gateway:
+      enabled: true
+  health:
+    livenessState:
+      enabled: true
+    readinessState:
+      enabled: true
+    circuitbreakers:
+      enabled: true
 
-# Logging
+# ==========================================
+# RESILIENCE4J CONFIGURATION (CIRCUIT BREAKER)
+# ==========================================
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        registerHealthIndicator: true
+        slidingWindowType: COUNT_BASED
+        slidingWindowSize: 10
+        minimumNumberOfCalls: 5
+        permittedNumberOfCallsInHalfOpenState: 3
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+        waitDurationInOpenState: 10s
+        failureRateThreshold: 50
+    instances:
+      anggotaCircuitBreaker:
+        baseConfig: default
+      bukuCircuitBreaker:
+        baseConfig: default
+      peminjamanCircuitBreaker:
+        baseConfig: default
+      pengembalianCircuitBreaker:
+        baseConfig: default
+  
+  retry:
+    configs:
+      default:
+        maxAttempts: 3
+        waitDuration: 500ms
+        enableExponentialBackoff: true
+        exponentialBackoffMultiplier: 2
+    instances:
+      anggotaRetry:
+        baseConfig: default
+      bukuRetry:
+        baseConfig: default
+      peminjamanRetry:
+        baseConfig: default
+      pengembalianRetry:
+        baseConfig: default
+
+# ==========================================
+# LOGGING CONFIGURATION
+# ==========================================
 logging:
   level:
-    org.springframework.cloud.gateway: DEBUG
-    org.springframework.cloud.loadbalancer: DEBUG
+    root: INFO
+    org.springframework.cloud.gateway: INFO
+    org.springframework.web: INFO
+    com.perpustakaan: DEBUG
+    io.github.resilience4j: INFO
+  pattern:
+    console: '%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n'
+  file:
+    name: logs/api-gateway.log
+    max-size: 10MB
+    max-history: 30
+
+# ==========================================
+# SWAGGER UI CONFIGURATION (AGGREGATOR)
+# ==========================================
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui.html
+    # Mengurutkan endpoint berdasarkan HTTP Method (GET, POST, dll)
+    operationsSorter: method
+    # Mengurutkan tag (nama controller) sesuai abjad
+    tagsSorter: alpha
+    # Tampilkan URL service anak di dropdown Swagger UI
+    urls:
+      - name: Service Anggota
+        url: /v3/api-docs/service-anggota
+      - name: Service Buku
+        url: /v3/api-docs/service-buku
+      - name: Service Peminjaman
+        url: /v3/api-docs/service-peminjaman
+      - name: Service Pengembalian
+        url: /v3/api-docs/service-pengembalian

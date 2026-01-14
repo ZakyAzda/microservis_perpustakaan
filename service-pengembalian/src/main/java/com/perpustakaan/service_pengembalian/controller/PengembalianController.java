@@ -1,31 +1,51 @@
 package com.perpustakaan.service_pengembalian.controller;
 
+import com.perpustakaan.service_pengembalian.cqrs.command.*;
+import com.perpustakaan.service_pengembalian.cqrs.handler.*;
+import com.perpustakaan.service_pengembalian.cqrs.query.*;
 import com.perpustakaan.service_pengembalian.dto.PengembalianRequest;
-import com.perpustakaan.service_pengembalian.entity.Pengembalian;
-import com.perpustakaan.service_pengembalian.service.PengembalianService;
+import com.perpustakaan.service_pengembalian.entity.command.Pengembalian;
+import com.perpustakaan.service_pengembalian.entity.query.PengembalianReadModel; // Import baru
 import com.perpustakaan.service_pengembalian.vo.ResponseTemplateVO;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import java.util.List;
 
 @RestController
 @RequestMapping("/api/pengembalian")
+@Tag(name = "Pengembalian Management", description = "APIs for managing book returns")
 public class PengembalianController {
 
     @Autowired
-    private PengembalianService pengembalianService;
+    private PengembalianCommandHandler commandHandler;
+
+    @Autowired
+    private PengembalianQueryHandler queryHandler;
 
     @PostMapping
-    public ResponseEntity<Pengembalian> savePengembalian(@RequestBody PengembalianRequest request) {
-        Pengembalian saved = pengembalianService.savePengembalian(request);
+    @Operation(summary = "Create Pengembalian")
+    public ResponseEntity<Pengembalian> createPengembalian(@Valid @RequestBody PengembalianRequest request) {
+        CreatePengembalianCommand command = new CreatePengembalianCommand(
+            request.getPeminjamanId(),
+            request.getTanggalDikembalikan(),
+            request.getTerlambat(),
+            request.getDenda()
+        );
+        Pengembalian saved = commandHandler.handle(command);
         return new ResponseEntity<>(saved, HttpStatus.CREATED);
     }
 
     @GetMapping("/{id}")
+    @Operation(summary = "Get Pengembalian By ID")
     public ResponseEntity<ResponseTemplateVO> getPengembalian(@PathVariable("id") Long id) {
-        ResponseTemplateVO response = pengembalianService.getPengembalianWithDetails(id);
+        GetPengembalianByIdQuery query = new GetPengembalianByIdQuery(id);
+        ResponseTemplateVO response = queryHandler.handle(query);
+        
         if (response != null) {
             return ResponseEntity.ok(response);
         }
@@ -33,20 +53,46 @@ public class PengembalianController {
     }
 
     @GetMapping
-    public ResponseEntity<List<Pengembalian>> getAllPengembalian() {
-        return ResponseEntity.ok(pengembalianService.getAllPengembalian());
+    @Operation(summary = "Get All Pengembalian")
+    public ResponseEntity<Page<PengembalianReadModel>> getAllPengembalian(
+            @RequestParam(defaultValue = "0") Integer page,
+            @RequestParam(defaultValue = "10") Integer size) {
+        
+        GetAllPengembalianQuery query = new GetAllPengembalianQuery(page, size);
+        return ResponseEntity.ok(queryHandler.handle(query));
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<Pengembalian> updatePengembalian(@PathVariable("id") Long id,
-            @RequestBody PengembalianRequest request) {
-        Pengembalian updated = pengembalianService.updatePengembalian(id, request);
-        return ResponseEntity.ok(updated);
+    @Operation(summary = "Update Pengembalian")
+    public ResponseEntity<Pengembalian> updatePengembalian(
+            @PathVariable("id") Long id, 
+            @Valid @RequestBody PengembalianRequest request) {
+        
+        UpdatePengembalianCommand command = new UpdatePengembalianCommand(
+            id,
+            request.getPeminjamanId(),
+            request.getTanggalDikembalikan(),
+            request.getTerlambat(),
+            request.getDenda()
+        );
+
+        try {
+            Pengembalian updated = commandHandler.handle(command);
+            return ResponseEntity.ok(updated);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
+        }
     }
 
     @DeleteMapping("/{id}")
+    @Operation(summary = "Delete Pengembalian")
     public ResponseEntity<Void> deletePengembalian(@PathVariable("id") Long id) {
-        pengembalianService.deletePengembalian(id);
-        return ResponseEntity.noContent().build();
+        DeletePengembalianCommand command = new DeletePengembalianCommand(id);
+        try {
+            commandHandler.handle(command);
+            return ResponseEntity.noContent().build();
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
+        }
     }
 }
