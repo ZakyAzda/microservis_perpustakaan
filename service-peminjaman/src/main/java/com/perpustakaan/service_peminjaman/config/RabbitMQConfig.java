@@ -12,6 +12,12 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class RabbitMQConfig {
 
+    // --- TAMBAHAN: Konstanta Static agar bisa dipanggil PeminjamanService ---
+    public static final String EXCHANGE = "peminjaman_exchange";
+    public static final String ROUTING_KEY = "peminjaman_routing_key";
+    public static final String QUEUE = "peminjaman_queue";
+    // ------------------------------------------------------------------------
+
     @Value("${perpustakaan.rabbitmq.queue}")
     private String queueName;
 
@@ -23,17 +29,18 @@ public class RabbitMQConfig {
 
     @Bean
     public Queue queue() {
-        return new Queue(queueName, true);
+        // Menggunakan value dari properties, atau fallback ke konstanta jika kosong
+        return new Queue(queueName != null ? queueName : QUEUE, true);
     }
 
     @Bean
     public TopicExchange exchange() {
-        return new TopicExchange(exchangeName);
+        return new TopicExchange(exchangeName != null ? exchangeName : EXCHANGE);
     }
 
     @Bean
     public Binding binding(Queue queue, TopicExchange exchange) {
-        return BindingBuilder.bind(queue).to(exchange).with(routingKey);
+        return BindingBuilder.bind(queue).to(exchange).with(routingKey != null ? routingKey : ROUTING_KEY);
     }
 
     @Bean

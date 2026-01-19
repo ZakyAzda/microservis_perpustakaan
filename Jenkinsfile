@@ -8,7 +8,7 @@ pipeline {
 
     environment {
         // Username Docker Hub
-        DOCKER_HUB_USER = 'erlandagsya' 
+        DOCKER_HUB_USER = 'zakyazda' 
         
         GIT_COMMIT_SHORT = sh(
             script: "git rev-parse --short HEAD",
@@ -67,9 +67,6 @@ pipeline {
                     services.each { service ->
                         echo "🔨 Building ${service} (Skipping Tests)..."
                         dir(service) {
-                            // PERINTAH SAKTI: -Dmaven.test.skip=true
-                            // Artinya: Jangan compile test, jangan jalankan test. 
-                            // Pokoknya bikin JAR dari main code saja.
                             sh 'mvn clean package -Dmaven.test.skip=true'
                         }
                     }

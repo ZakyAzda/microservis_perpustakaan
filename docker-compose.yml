@@ -1,10 +1,5 @@
 version: '3.8'
 
-# ==========================================
-# PERPUSTAKAAN MICROSERVICES STACK
-# Architecture: CQRS (Mongo) + ELK + Jenkins
-# ==========================================
-
 networks:
   perpustakaan-network:
     driver: bridge
@@ -14,13 +9,12 @@ volumes:
     driver: local
   jenkins_home:
     driver: local
-  mongodb-data:  # <--- NEW VOLUME
+  mongodb-data:
+    driver: local
+  grafana-data:
     driver: local
 
 services:
-  # ==========================================
-  # 1. DATABASE INFRASTRUCTURE
-  # ==========================================
   
   mongodb:
     image: mongo:6.0
@@ -38,13 +32,58 @@ services:
           memory: 512M
 
   # ==========================================
-  # 2. CI/CD INFRASTRUCTURE
+  # MESSAGE BROKER (CRITICAL)
+  # ==========================================
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    networks:
+      - perpustakaan-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 30s
+      timeout: 30s
+      retries: 5
+      start_period: 60s
+
+  # ==========================================
+  # SERVICE DISCOVERY
+  # ==========================================
+  eureka-server:
+    build:
+      context: ./eureka-server
+      dockerfile: Dockerfile
+    image: perpus/eureka-server:latest
+    container_name: eureka-server
+    ports:
+      - "8761:8761"
+    environment:
+      - SPRING_PROFILES_ACTIVE=dev
+    networks:
+      - perpustakaan-network
+    healthcheck:
+      # Menggunakan curl (bukan wget) dan waktu start diperlama
+      test: ["CMD", "curl", "-f", "http://localhost:8761/actuator/health"]
+      interval: 30s
+      timeout: 30s
+      retries: 10
+      start_period: 180s # Diberi waktu 3 menit untuk boot
+    restart: unless-stopped
+
+  # ==========================================
+  # MONITORING & CI/CD (TETAP DINYALAKAN)
   # ==========================================
   jenkins:
     build: 
       context: .
-      dockerfile: Dockerfile-jenkins  # <-- Arahkan ke file yang baru dibuat
-    # image: jenkins/jenkins:lts-jdk17  <-- HAPUS atau KOMENTAR baris ini
+      dockerfile: Dockerfile-jenkins
     container_name: jenkins
     user: root
     ports:
@@ -52,19 +91,14 @@ services:
       - "50000:50000"
     volumes:
       - jenkins_home:/var/jenkins_home
-      - /var/run/docker.sock:/var/run/docker.sock # Kabel koneksi ke mesin Host
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - perpustakaan-network
     restart: unless-stopped
     deploy:
       resources:
         limits:
-          cpus: '1.0'
           memory: 1G
-
-  # ==========================================
-  # 3. LOGGING INFRASTRUCTURE (ELK)
-  # ==========================================
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
@@ -83,9 +117,9 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
       interval: 30s
-      timeout: 10s
+      timeout: 30s
       retries: 5
-      start_period: 30s
+      start_period: 120s
     restart: unless-stopped
     deploy:
       resources:
@@ -100,6 +134,7 @@ services:
       - ./monitoring/logstash/pipeline:/usr/share/logstash/pipeline:ro
     ports:
       - "5000:5000/tcp"
+      - "9600:9600"
     environment:
       - "LS_JAVA_OPTS=-Xmx256m -Xms256m"
       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
@@ -124,67 +159,47 @@ services:
         condition: service_healthy
     networks:
       - perpustakaan-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5601/api/status"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
     restart: unless-stopped
 
-  # ==========================================
-  # 4. SERVICE DISCOVERY
-  # ==========================================
-
-  eureka-server:
-    build:
-      context: ./eureka-server
-      dockerfile: Dockerfile
-    image: perpus/eureka-server:latest
-    container_name: eureka-server
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
     ports:
-      - "8761:8761"
-    environment:
-      - SPRING_PROFILES_ACTIVE=dev
-      - LOGSTASH_HOST=logstash
-      - LOGSTASH_PORT=5000
-    depends_on:
-      logstash:
-        condition: service_started
+      - "9090:9090"
     networks:
       - perpustakaan-network
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8761/actuator/health"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-      start_period: 40s
     restart: unless-stopped
 
-  # ==========================================
-  # RABBIT MQ MESSAGE BROKER
-  # ==========================================
-  rabbitmq:
-    image: rabbitmq:3.12-management-alpine
-    container_name: rabbitmq
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
     ports:
-      - "5672:5672"   # Port komunikasi aplikasi (Java)
-      - "15672:15672" # Port Dashboard Management (Browser)
+      - "3000:3000"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - grafana-data:/var/lib/grafana
     environment:
-      # Mapping variabel dari file .env Anda ke variabel asli Image RabbitMQ
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    depends_on:
+      - prometheus
     networks:
-      - perpustakaan-network # Sesuaikan dengan nama network di docker-compose Anda
+      - perpustakaan-network
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
+
+  zipkin:
+    image: openzipkin/zipkin
+    container_name: zipkin
+    ports:
+      - "9411:9411"
+    networks:
+      - perpustakaan-network
+    restart: unless-stopped
 
   # ==========================================
-  # 5. API GATEWAY
+  # CORE SERVICES
   # ==========================================
 
   api-gateway:
@@ -200,22 +215,20 @@ services:
       - EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE=http://eureka-server:8761/eureka/
       - LOGSTASH_HOST=logstash
       - LOGSTASH_PORT=5000
+      - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
     depends_on:
       eureka-server:
         condition: service_healthy
     networks:
       - perpustakaan-network
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/actuator/health"]
-      interval: 15s
-      timeout: 10s
+      # GANTI WGET -> CURL
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 30s
       retries: 10
-      start_period: 60s
+      start_period: 180s
     restart: unless-stopped
-
-  # ==========================================
-  # 7. MICROSERVICES (CORE)
-  # ==========================================
 
   service-anggota:
     build:
@@ -230,22 +243,29 @@ services:
       - EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE=http://eureka-server:8761/eureka/
       - LOGSTASH_HOST=logstash
       - LOGSTASH_PORT=5000
-      # MONGO CONFIG
-      - SPRING_DATA_MONGODB_URI=${MONGODB_URI_ANGGOTA}
+      - SPRING_DATA_MONGODB_URI=${MONGODB_URI_ANGGOTA:-mongodb://mongodb:27017/anggota_db}
       - SPRING_DATA_MONGODB_DATABASE=anggota_db
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USERNAME=${RABBITMQ_USERNAME:-guest}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
+      - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
     depends_on:
       eureka-server:
         condition: service_healthy
       mongodb:
         condition: service_started
+      rabbitmq:
+        condition: service_healthy
     networks:
       - perpustakaan-network
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8081/actuator/health"]
-      interval: 15s
-      timeout: 10s
+      # GANTI WGET -> CURL
+      test: ["CMD", "curl", "-f", "http://localhost:8081/actuator/health"]
+      interval: 30s
+      timeout: 30s
       retries: 10
-      start_period: 60s
+      start_period: 240s # Waktu boot sangat lama (4 menit) karena beban berat
     restart: unless-stopped
 
   service-buku:
@@ -261,22 +281,29 @@ services:
       - EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE=http://eureka-server:8761/eureka/
       - LOGSTASH_HOST=logstash
       - LOGSTASH_PORT=5000
-      # MONGO CONFIG
-      - SPRING_DATA_MONGODB_URI=${MONGODB_URI_BUKU}
+      - SPRING_DATA_MONGODB_URI=${MONGODB_URI_BUKU:-mongodb://mongodb:27017/buku_db}
       - SPRING_DATA_MONGODB_DATABASE=buku_db
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USERNAME=${RABBITMQ_USERNAME:-guest}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
+      - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
     depends_on:
       eureka-server:
         condition: service_healthy
       mongodb:
         condition: service_started
+      rabbitmq:
+        condition: service_healthy
     networks:
       - perpustakaan-network
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8082/actuator/health"]
-      interval: 15s
-      timeout: 10s
+      # GANTI WGET -> CURL
+      test: ["CMD", "curl", "-f", "http://localhost:8082/actuator/health"]
+      interval: 30s
+      timeout: 30s
       retries: 10
-      start_period: 60s
+      start_period: 240s
     restart: unless-stopped
 
   service-peminjaman:
@@ -292,12 +319,14 @@ services:
       - EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE=http://eureka-server:8761/eureka/
       - LOGSTASH_HOST=logstash
       - LOGSTASH_PORT=5000
-      # MONGO CONFIG
-      - SPRING_DATA_MONGODB_URI=${MONGODB_URI_PEMINJAMAN}
+      - SPRING_DATA_MONGODB_URI=${MONGODB_URI_PEMINJAMAN:-mongodb://mongodb:27017/peminjaman_db}
       - SPRING_DATA_MONGODB_DATABASE=peminjaman_db
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USERNAME=${RABBITMQ_USERNAME:-guest}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
+      - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
     depends_on:
-      eureka-server:
-        condition: service_healthy
       service-anggota:
         condition: service_healthy
       service-buku:
@@ -307,11 +336,12 @@ services:
     networks:
       - perpustakaan-network
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8083/actuator/health"]
-      interval: 15s
-      timeout: 10s
+      # GANTI WGET -> CURL
+      test: ["CMD", "curl", "-f", "http://localhost:8083/actuator/health"]
+      interval: 30s
+      timeout: 30s
       retries: 10
-      start_period: 60s
+      start_period: 240s
     restart: unless-stopped
 
   service-pengembalian:
@@ -327,12 +357,14 @@ services:
       - EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE=http://eureka-server:8761/eureka/
       - LOGSTASH_HOST=logstash
       - LOGSTASH_PORT=5000
-      # MONGO CONFIG
-      - SPRING_DATA_MONGODB_URI=${MONGODB_URI_PENGEMBALIAN}
+      - SPRING_DATA_MONGODB_URI=${MONGODB_URI_PENGEMBALIAN:-mongodb://mongodb:27017/pengembalian_db}
       - SPRING_DATA_MONGODB_DATABASE=pengembalian_db
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USERNAME=${RABBITMQ_USERNAME:-guest}
+      - RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD:-guest}
+      - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
     depends_on:
-      eureka-server:
-        condition: service_healthy
       service-peminjaman:
         condition: service_healthy
       mongodb:
@@ -340,9 +372,10 @@ services:
     networks:
       - perpustakaan-network
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8084/actuator/health"]
-      interval: 15s
-      timeout: 10s
+      # GANTI WGET -> CURL
+      test: ["CMD", "curl", "-f", "http://localhost:8084/actuator/health"]
+      interval: 30s
+      timeout: 30s
       retries: 10
-      start_period: 60s
+      start_period: 240s
     restart: unless-stopped

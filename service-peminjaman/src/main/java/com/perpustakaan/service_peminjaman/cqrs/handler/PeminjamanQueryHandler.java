@@ -32,10 +32,9 @@ public class PeminjamanQueryHandler {
     private DiscoveryClient discoveryClient;
 
     public ResponseTemplateVO handle(GetPeminjamanById query) {
-        // LOG 1: Mencatat request masuk
         logger.info("Handling query GetPeminjamanById for ID: {}", query.getId());
-
-        Optional<PeminjamanReadModel> peminjamanOpt = peminjamanRepository.findById(query.getId());
+        String idString = query.getId().toString();
+        Optional<PeminjamanReadModel> peminjamanOpt = peminjamanRepository.findById(idString);
         
         if (peminjamanOpt.isEmpty()) {
             // LOG 2: Mencatat jika data tidak ditemukan di Mongo
@@ -71,7 +70,7 @@ public class PeminjamanQueryHandler {
                     bukuUrl + "/api/buku/" + peminjaman.getBukuId(), 
                     Buku.class
                 );
-                vo.setBuku(buku);
+                vo.setBuku(buku);   
             } else {
                 logger.error("Service URL untuk service-buku tidak ditemukan di Eureka!");
             }
