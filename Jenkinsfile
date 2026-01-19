@@ -88,23 +88,23 @@ pipeline {
             }
         }
 
-        stage('Push to Docker Hub') {
-            when { expression { params.SKIP_DOCKER_BUILD == false } }
-            steps {
-                script {
-                    withCredentials([usernamePassword(credentialsId: 'docker-hub-credentials', passwordVariable: 'DOCKER_PASS', usernameVariable: 'DOCKER_USER')]) {
-                        sh "echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin"
+        // stage('Push to Docker Hub') {
+        //     when { expression { params.SKIP_DOCKER_BUILD == false } }
+        //     steps {
+        //         script {
+        //             withCredentials([usernamePassword(credentialsId: 'docker-hub-credentials', passwordVariable: 'DOCKER_PASS', usernameVariable: 'DOCKER_USER')]) {
+        //                 sh "echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin"
                         
-                        def services = SERVICES.split(',')
-                        services.each { service ->
-                            echo "🚀 Pushing ${service}..."
-                            sh "docker push ${DOCKER_HUB_USER}/${service}:${BUILD_VERSION}"
-                            sh "docker push ${DOCKER_HUB_USER}/${service}:latest"
-                        }
-                    }
-                }
-            }
-        }
+        //                 def services = SERVICES.split(',')
+        //                 services.each { service ->
+        //                     echo "🚀 Pushing ${service}..."
+        //                     sh "docker push ${DOCKER_HUB_USER}/${service}:${BUILD_VERSION}"
+        //                     sh "docker push ${DOCKER_HUB_USER}/${service}:latest"
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
 
         stage('Deploy to Environment') {
             when { expression { params.DEPLOY_SERVICES == true } }
