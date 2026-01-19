@@ -154,7 +154,7 @@ EOF
                     """
                     
                     // Restart Docker Compose
-                    sh "docker-compose down || true"
+                    //sh "docker-compose down || true"
                     sh "docker-compose up -d"
                     
                     echo "✅ Services deployed."
